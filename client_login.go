@@ -14,16 +14,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"log"
-	"net/http"
-	"regexp"
+	h "southwinds.dev/http"
 	"strings"
 	"time"
 )
 
 // Login check that the user is authenticated using the CMDB as user store
 // and returns a list of access controls for the user
-func (c *Client) Login(credentials *Login) (*UserPrincipal, error) {
+func (c *Client) Login(credentials *Login) (*h.UserPrincipal, error) {
 	// validates user
 	if err := credentials.valid(); err != nil {
 		return nil, err
@@ -56,102 +54,18 @@ func (c *Client) Login(credentials *Login) (*UserPrincipal, error) {
 		return nil, fmt.Errorf("user was authenticated but failed to parse access controls for user '%s': '%s'\n", credentials.Username, err)
 	}
 	// constructs a principal and returns
-	return &UserPrincipal{
+	return &h.UserPrincipal{
 		Username: credentials.Username,
 		Rights:   controls,
 		Created:  time.Now(),
 	}, nil
 }
 
-// Control represents a user access control based on a URI that is part of a realm
-type Control struct {
-	// the control realm (e.g. application)
-	Realm string
-	// the control resource URI (e.g. typically but not exclusively, a restful endpoint URI)
-	URI string
-	// the method(s) used by the resource (e.g. POST for create, PUT for update, DELETE for delete)
-	Method []string
-}
-
-func (c *Control) hasMethod(method string) bool {
-	for _, m := range c.Method {
-		if strings.ToUpper(strings.Trim(m, " ")) == strings.ToUpper(strings.Trim(method, " ")) {
-			return true
-		}
-	}
-	return false
-}
-
-func (c *Control) equal(ctl Control) bool {
-	return strings.EqualFold(ctl.Realm, c.Realm) && ctl.URI == c.URI && equalMethods(c.Method, ctl.Method)
-}
-
-func equalMethods(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i, v := range a {
-		if v != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
-type Controls []Control
-
-func (controls Controls) Add(ctl ...Control) Controls {
-	var (
-		found bool
-		r     = controls
-	)
-	for _, c := range ctl {
-		found = false
-		for _, control := range controls {
-			if control.equal(c) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			r = append(r, c)
-		}
-	}
-	return r
-}
-
-// Allowed returns true if the specified control matches one of the controls granted to the user
-func (controls Controls) allowed(realm, uri, method string) bool {
-	for _, c := range controls {
-		matched, err := regexp.MatchString(c.URI, uri)
-		if err != nil {
-			log.Printf("WARNING: cannot match URI path, %s\n", err)
-		}
-		if (c.Realm == realm || c.Realm == "*") &&
-			(matched || c.URI == "*") &&
-			(c.hasMethod(method) || c.hasMethod("*")) {
-			return true
-		}
-	}
-	return false
-}
-
-// RequestAllowed returns true if the http request matches one of the controls granted to the user for the given realm
-func (controls Controls) RequestAllowed(realm string, r *http.Request) bool {
-	// extract user principal from the request context
-	if principal := r.Context().Value("User"); principal != nil {
-		if value, ok := principal.(*UserPrincipal); ok {
-			return value.Rights.allowed(realm, r.RequestURI, r.Method)
-		}
-	}
-	return false
-}
-
-func newControls(acl string) (Controls, error) {
-	var result Controls
+func newControls(acl string) (h.Controls, error) {
+	var ctls h.Controls
 	// if acl is empty then return an empty list of controls
 	if len(strings.Trim(acl, " ")) == 0 {
-		return Controls{}, nil
+		return h.Controls{}, nil
 	}
 	parts := strings.Split(acl, ",")
 	for _, part := range parts {
@@ -159,31 +73,19 @@ func newControls(acl string) (Controls, error) {
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, control)
+		ctls = append(ctls, control)
 	}
-	return result, nil
+	return ctls, nil
 }
 
-func newControl(ac string) (Control, error) {
+func newControl(ac string) (h.Control, error) {
 	parts := strings.Split(ac, ":")
 	if len(parts) != 3 {
-		return Control{}, fmt.Errorf("Invalid control format '%s', it should be realm:uri:method\n", ac)
+		return h.Control{}, fmt.Errorf("Invalid control format '%s', it should be realm:uri:method\n", ac)
 	}
-	return Control{
+	return h.Control{
 		Realm:  parts[0],
 		URI:    parts[1],
 		Method: strings.Split(parts[2], "|"),
 	}, nil
-}
-
-// UserPrincipal represents a logged on user and the access controls granted to them
-type UserPrincipal struct {
-	// the user Username used as a unique identifier (typically the user email address)
-	Username string `json:"username"`
-	// a list of rights or access controls granted to the user
-	Rights Controls `json:"acl,omitempty"`
-	// the time the principal was Created
-	Created time.Time `json:"created"`
-	// any context associated to the principal
-	Context interface{}
 }
