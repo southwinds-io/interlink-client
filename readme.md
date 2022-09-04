@@ -1,6 +1,6 @@
-# Onix Configuration Database HTTP client
+# Interlink Configuration Management Database HTTP client
 
-A go client for the Onix Configuration Database HTTP API.
+A go client for the Interlink Configuration Management Database HTTP API.
 
 ## Usage 
 
